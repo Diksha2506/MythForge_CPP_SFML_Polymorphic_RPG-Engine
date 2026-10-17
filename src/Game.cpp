@@ -279,7 +279,15 @@ void Game::loadLevel(int level, bool isRestoringFromSave)
     }
     overheadProps.clear(); enemies.clear(); npcs.clear(); particles.clear();
     missionSystem.clear();
-    wave = 1; levelComplete = false;
+    wave = 1; levelComplete = false; waveMissionDone = false;
+
+    if (!isRestoringFromSave) {
+        player.inventory.setItem("wood", 0);
+        player.inventory.setItem("stone", 0);
+        player.inventory.setItem("metal", 0);
+        player.inventory.setItem("food", 10);
+        player.inventory.setItem("water", 10);
+    }
 
     if (level == 1) {
         buildMapLevel1(); 
@@ -313,6 +321,10 @@ void Game::loadLevel(int level, bool isRestoringFromSave)
 
     camera.setMapBounds(mapW(), mapH());
     camera.followPlayer(player);
+    
+    // Wave timing initialization
+    waveTimer = WAVE_DURATION;
+    isWaveActive = true;
     spawnWave(wave);
 }
 
@@ -504,7 +516,7 @@ void Game::spawnWave(int w)
                 if (r == 0) type = Enemy::KNIGHT; else if (r == 1) type = Enemy::ROGUE; else if (r == 2) type = Enemy::WIZZARD; else type = Enemy::SKELETON;
             } else type = (rand() % 3 == 0) ? Enemy::WIZZARD : Enemy::SKELETON;
         }
-        enemies.emplace_back(x, y, type);
+        enemies.push_back(std::make_shared<Enemy>(x, y, type));
     }
 }
 
@@ -603,7 +615,11 @@ void Game::onEnemyKilled()
     if (currentLevel == 3) missionSystem.updateMission("Assault Forces", 1);
 }
 
-void Game::onAllWavesCleared() { missionSystem.updateMission("Survive Waves", 1); }
+void Game::onAllWavesCleared() { 
+    missionSystem.updateMission("Survive Waves", 1); 
+    missionSystem.updateMission("Assault Forces", 15); // Level 3 mission
+    missionSystem.updateMission("Defeat Enemies", 100);
+}
 
 void Game::update(float dt)
 {
@@ -614,8 +630,16 @@ void Game::update(float dt)
         return;
     }
     if (levelComplete) {
-        levelCompleteTimer -= dt;
-        if (levelCompleteTimer <= 0.f) {
+        if (levelCompleteTimer > 0.f) levelCompleteTimer -= dt;
+        
+        // Show next level instruction
+        if (currentLevel < MAX_LEVEL) {
+            levelCompleteText.setString("LEVEL " + std::to_string(currentLevel) + " COMPLETE!\n\nPress [ENTER] to continue to Level " + std::to_string(currentLevel+1));
+        } else {
+            levelCompleteText.setString("ALL LEVELS COMPLETE!\n\nYOU ARE A LEGEND!\nPress [ENTER] to return to Menu");
+        }
+
+        if (levelCompleteTimer <= 0.f && sf::Keyboard::isKeyPressed(sf::Keyboard::Enter)) {
             levelComplete = false;
             if (currentLevel < MAX_LEVEL) { 
                 currentLevel++; 
@@ -623,7 +647,9 @@ void Game::update(float dt)
                 loadLevel(currentLevel); 
                 SaveManager::saveGame("savegame.json", currentLevel, maxLevelUnlocked, player, groundProps);
             }
-            else { gameOver = true; gameOverText.setString("YOU WIN! All Levels Clear!\nPress R to Restart"); gameOverText.setFillColor(sf::Color::Yellow); }
+            else { 
+                currentState = GameState::MENU;
+            }
         }
         return;
     }
@@ -647,35 +673,75 @@ void Game::update(float dt)
 
     if (player.stats.isDead()) gameOver = true;
 
-    int liveEnemies = 0;
-    for(auto& e : enemies) if(!e.isDead()) liveEnemies++;
-    if (liveEnemies == 0 && !levelComplete) {
-        if (wave >= wavesPerLevel[currentLevel]) {
-            // Last wave cleared
-            static bool waveMissionDone = false;
-            if (enemiesKilledInWave >= totalEnemiesInWave && !waveMissionDone) {
-                onAllWavesCleared();
-                waveMissionDone = true;
-            }
-            
-            if (missionSystem.allMissionsCompleted()) {
-                levelComplete = true;
-                levelCompleteTimer = LEVEL_COMPLETE_DELAY;
-                waveMissionDone = false; // Reset for next level
-            }
-        } else {
-            // Progress to next wave if current one is fully cleared
-            if (enemiesKilledInWave >= totalEnemiesInWave) {
-                wave++;
-                spawnWave(wave);
+    // Wave timing logic
+    if (!levelComplete) {
+        waveTimer -= dt;
+        if (waveTimer <= 0) {
+            waveTimer = 0; // Clamp
+            if (isWaveActive) {
+                // Wave duration ended -> Start Break
+                isWaveActive = false;
+                waveTimer = WAVE_INTERVAL;
+            } else {
+                // Break ended -> Start Next Wave
+                if (currentLevel >= 1 && currentLevel <= MAX_LEVEL && wave < wavesPerLevel[currentLevel]) {
+                    wave++;
+                    isWaveActive = true;
+                    waveTimer = WAVE_DURATION;
+                    spawnWave(wave);
+                } else {
+                    // Stay at 0 if all waves finished
+                    waveTimer = 0;
+                }
             }
         }
     }
 
-    // Dynamic Mission Description Update for Waves
-    std::string waveInfo = "Wave " + std::to_string(wave) + "/" + std::to_string(wavesPerLevel[currentLevel]) + 
-                          ": " + std::to_string(enemiesKilledInWave) + "/" + std::to_string(totalEnemiesInWave) + " defeated";
-    missionSystem.updateDescription("Survive Waves", waveInfo);
+    int liveEnemies = 0;
+    for(auto& e : enemies) if(!e->isDead()) liveEnemies++;
+
+    // Level progression logic
+    if (currentLevel >= 1 && currentLevel <= MAX_LEVEL && wave >= wavesPerLevel[currentLevel] && !levelComplete) {
+        // If it's the last wave AND either the time ran out OR all enemies are dead
+        bool allWavesSent = !isWaveActive && wave >= wavesPerLevel[currentLevel];
+        if ((allWavesSent || liveEnemies == 0) && !waveMissionDone) {
+            onAllWavesCleared();
+            waveMissionDone = true;
+        }
+        
+        if (missionSystem.allMissionsCompleted()) {
+            levelComplete = true;
+            levelCompleteTimer = 1.0f; // Small delay before allowing Enter
+            waveMissionDone = false; 
+        }
+    }
+
+    // Dynamic Mission Description Update for Waves with Timer
+    float safeTimer = std::max(0.f, waveTimer);
+    int displayMin = static_cast<int>(safeTimer) / 60;
+    int displaySec = static_cast<int>(safeTimer) % 60;
+    std::string timeStr = (displaySec < 10 ? "0" : "") + std::to_string(displaySec);
+    
+    std::string waveInfo;
+    int currentMaxWaves = (currentLevel >= 1 && currentLevel <= MAX_LEVEL) ? wavesPerLevel[currentLevel] : 0;
+    
+    if (isWaveActive) {
+        waveInfo = "Wave " + std::to_string(wave) + "/" + std::to_string(currentMaxWaves) + 
+                   " (Active: " + std::to_string(displayMin) + ":" + timeStr + ")";
+    } else {
+        if (currentLevel >= 1 && currentLevel <= MAX_LEVEL && wave < wavesPerLevel[currentLevel]) {
+            waveInfo = "Preparing Wave " + std::to_string(wave + 1) + "/" + std::to_string(currentMaxWaves) + 
+                       " (Next in: " + std::to_string(displayMin) + ":" + timeStr + ")";
+        } else {
+            waveInfo = "All Waves Dispatched! Clear remaining enemies.";
+        }
+    }
+    
+    if (currentLevel == 3) {
+        missionSystem.updateDescription("Assault Forces", waveInfo + " | Kills: " + std::to_string(enemiesKilledInWave) + "/" + std::to_string(totalEnemiesInWave));
+    } else {
+        missionSystem.updateDescription("Survive Waves", waveInfo);
+    }
 }
 
 void Game::updateFarms(float dt)
@@ -711,34 +777,34 @@ void Game::updateEnemies(float dt)
     enemyDmgTimer += dt;
     auto it = enemies.begin();
     while(it != enemies.end()) {
-        it->setTarget(player.getPosition()); it->update(dt);
-        if (it->isAnimFinished()) { it = enemies.erase(it); continue; }
+        (*it)->setTarget(player.getPosition()); (*it)->update(dt);
+        if ((*it)->isAnimFinished()) { it = enemies.erase(it); continue; }
         
-        if (!it->isDead()) {
-            float dx = player.getPosition().x - it->getPosition().x;
-            float dy = player.getPosition().y - it->getPosition().y;
+        if (!(*it)->isDead()) {
+            float dx = player.getPosition().x - (*it)->getPosition().x;
+            float dy = player.getPosition().y - (*it)->getPosition().y;
             float dist = std::sqrt(dx*dx + dy*dy);
 
-            if (it->popShootRequest()) {
+            if ((*it)->popShootRequest()) {
                 // Wizzard fired a projectile
                 float projSpeed = 400.f;
                 sf::Vector2f vel(dx / dist * projSpeed, dy / dist * projSpeed);
-                projectiles.emplace_back(it->getPosition().x, it->getPosition().y - 20.f, vel, 2.5f, 15);
+                projectiles.emplace_back((*it)->getPosition().x, (*it)->getPosition().y - 20.f, vel, 2.5f, 15);
             }
 
             // Synchronization of damage with attack animation
-            if (it->getState() == Enemy::ATTACK && it->getAnimFrame() == 3 && dist < 60.f && enemyDmgTimer > 0.8f) {
+            if ((*it)->getState() == Enemy::ATTACK && (*it)->getAnimFrame() == 3 && dist < 60.f && enemyDmgTimer > 0.8f) {
                 int damage = 12; if (player.inventory.getArmorLevel() > 0) damage -= 4; if(damage < 4) damage = 4;
                 player.stats.modifyHealth(-damage); enemyDmgTimer = 0.f; camera.shake(12, 0.25f);
             }
 
             int playerDmg = player.getAttackPower() * player.inventory.getWeaponLevel();
             if (player.getState() == Player::ATTACKING && dist < 100.f) {
-                bool wasDead = it->isDead(); it->takeDamage(playerDmg); spawnBlood(it->getPosition());
-                if (!wasDead && it->isDead()) { 
+                bool wasDead = (*it)->isDead(); (*it)->takeDamage(playerDmg); spawnBlood((*it)->getPosition());
+                if (!wasDead && (*it)->isDead()) { 
                     onEnemyKilled(); 
                     EventManager::getInstance().trigger(EventType::OnEnemyKilled);
-                    if(rand()%8 == 0) spawnDrop(it->getPosition(), false, false, false, false, (rand()%2==0), (rand()%2==0)); 
+                    if(rand()%8 == 0) spawnDrop((*it)->getPosition(), false, false, false, false, (rand()%2==0), (rand()%2==0)); 
                 }
             }
         }
@@ -840,8 +906,8 @@ void Game::updateCollisions()
 
     // 3. Prop Collision (Enemies)
     for (auto& e : enemies) {
-        if (e.isDead()) continue;
-        sf::FloatRect eBounds = e.getSprite().getGlobalBounds();
+        if (e->isDead()) continue;
+        sf::FloatRect eBounds = e->getSprite().getGlobalBounds();
         sf::FloatRect eFeet = {eBounds.left + 15, eBounds.top + eBounds.height - 25, eBounds.width - 30, 15};
         
         for (auto& g : groundProps) {
@@ -850,7 +916,7 @@ void Game::updateCollisions()
                  sf::Vector2f eCenter(eFeet.left + eFeet.width/2.f, eFeet.top + eFeet.height/2.f);
                  sf::Vector2f diff = eCenter - gCenter;
                  float d = std::sqrt(diff.x*diff.x + diff.y*diff.y);
-                 if (d > 0) e.setPosition(e.getPosition().x + (diff.x/d)*4.f, e.getPosition().y + (diff.y/d)*4.f);
+                 if (d > 0) e->setPosition(e->getPosition().x + (diff.x/d)*4.f, e->getPosition().y + (diff.y/d)*4.f);
             }
         }
     }
@@ -1060,7 +1126,7 @@ void Game::draw()
     struct YSort { sf::Drawable* d; float y; };
     std::vector<YSort> sorted;
     for(auto& p : groundProps) sorted.push_back({&p.sprite, p.sprite.getPosition().y});
-    for(auto& e : enemies) sorted.push_back({&e.getSprite(), e.getPosition().y});
+    for(auto& e : enemies) sorted.push_back({&e->getSprite(), e->getPosition().y});
     for(auto& n : npcs) sorted.push_back({&n.getSprite(), n.getPosition().y});
     sorted.push_back({&player.getSprite(), player.getPosition().y});
 
@@ -1068,7 +1134,6 @@ void Game::draw()
     for(auto& s : sorted) window.draw(*s.d);
     for(auto& n : npcs) n.draw(window);
 
-    for(auto& e : enemies) e.draw(window);
     for(auto& p : overheadProps) window.draw(p.sprite);
     for(auto& p : particles) window.draw(p->shape);
     for(auto& pr : projectiles) window.draw(pr.shape);
@@ -1178,11 +1243,11 @@ void Game::drawMiniMap()
 
     // Draw enemies as red dots
     for (const auto& e : enemies) {
-        if (!e.isDead()) {
+        if (!e->isDead()) {
             sf::CircleShape enemyDot(30.f);
             enemyDot.setFillColor(sf::Color::Red);
             enemyDot.setOrigin(30.f, 30.f);
-            enemyDot.setPosition(e.getPosition());
+            enemyDot.setPosition(e->getPosition());
             window.draw(enemyDot);
         }
     }

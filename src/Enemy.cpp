@@ -3,9 +3,9 @@
 #include <iostream>
 #include <algorithm>
 
-Enemy::Enemy(float x, float y, EType type) : mobType(type), aiTimer(0.f), stateTimer(0.f), isDeadFinished(false), wShootFlag(false)
+Enemy::Enemy(float x, float y, EType type) : mobType(type), aiTimer(0.f), stateTimer(0.f), deathTimer(0.f), isDeadFinished(false), wShootFlag(false)
 {
-    currentState = PATROL;
+    currentState = CHASE;
     patrolPoint = sf::Vector2f(x + (rand() % 200 - 100), y + (rand() % 200 - 100));
 
     int fw = 64, fh = 64;
@@ -15,7 +15,7 @@ Enemy::Enemy(float x, float y, EType type) : mobType(type), aiTimer(0.f), stateT
     switch (mobType)
     {
     case SKELETON:
-        health = 60; maxHealth = 60; speed = 2.0f;
+        health = 60; maxHealth = 60; speed = 2.5f;
         tIdle.loadFromFile("assets_new/skel_idle.png");
         tRun.loadFromFile("assets_new/skel_run.png");
         tDeath.loadFromFile("assets_new/skel_death.png");
@@ -23,7 +23,7 @@ Enemy::Enemy(float x, float y, EType type) : mobType(type), aiTimer(0.f), stateT
         break;
 
     case KNIGHT:
-        health = 120; maxHealth = 120; speed = 2.4f;
+        health = 120; maxHealth = 120; speed = 3.0f;
         tIdle.loadFromFile("assets_new/knight_idle.png");
         tRun.loadFromFile("assets_new/knight_run.png");
         tDeath.loadFromFile("assets_new/knight_death.png");
@@ -31,7 +31,7 @@ Enemy::Enemy(float x, float y, EType type) : mobType(type), aiTimer(0.f), stateT
         break;
 
     case ROGUE:
-        health = 70; maxHealth = 70; speed = 3.8f;
+        health = 70; maxHealth = 70; speed = 4.5f;
         tIdle.loadFromFile("assets_new/rogue_idle.png");
         tRun.loadFromFile("assets_new/rogue_run.png");
         tDeath.loadFromFile("assets_new/rogue_death.png");
@@ -39,7 +39,7 @@ Enemy::Enemy(float x, float y, EType type) : mobType(type), aiTimer(0.f), stateT
         break;
 
     case WIZZARD:
-        health = 50; maxHealth = 50; speed = 1.8f;
+        health = 50; maxHealth = 50; speed = 2.0f;
         tIdle.loadFromFile("assets_new/wizzard_idle.png");
         tRun.loadFromFile("assets_new/wizzard_run.png");
         tDeath.loadFromFile("assets_new/wizzard_death.png");
@@ -47,7 +47,7 @@ Enemy::Enemy(float x, float y, EType type) : mobType(type), aiTimer(0.f), stateT
         break;
 
     default: // ORC
-        health = 80; maxHealth = 80; speed = 2.8f;
+        health = 80; maxHealth = 80; speed = 3.5f;
         tIdle.loadFromFile("assets_new/orc_idle.png");
         tRun.loadFromFile("assets_new/orc_run.png");
         tDeath.loadFromFile("assets_new/enemy_run.png");
@@ -77,7 +77,10 @@ void Enemy::update(float dt)
         int fw = (mobType == SKELETON || mobType == ORC) ? 64 : 32;
         anim.update(dt, sprite, fw, fw);
         
-        if (anim.isFinished()) isDeadFinished = true;
+        if (anim.isFinished()) {
+            deathTimer += dt;
+            if (deathTimer >= 5.0f) isDeadFinished = true;
+        }
         return;
     }
 
@@ -108,7 +111,7 @@ void Enemy::update(float dt)
                 patrolPoint = sf::Vector2f(pos.x + (rand() % 300 - 150), pos.y + (rand() % 300 - 150));
                 aiTimer = 0.f;
             }
-            if (dist < 400.f) currentState = CHASE;
+            if (dist < 5000.f) currentState = CHASE;
         }
         break;
 
@@ -141,7 +144,7 @@ void Enemy::update(float dt)
                   sprite.move(dx / dist * speed * 60.f * dt, dy / dist * speed * 60.f * dt);
                   if (dist < 60.f) { currentState = ATTACK; stateTimer = 0.f; }
             }
-            if (dist > 800.f) { currentState = PATROL; stateTimer = 0.f; }
+            if (dist > 6000.f) { currentState = PATROL; stateTimer = 0.f; }
         }
         break;
 
@@ -203,7 +206,10 @@ void Enemy::takeDamage(int dmg) {
     if (health <= 0) return;
     health -= dmg; 
     if (health <= 0) {
-        currentState = DEAD;
+        if (currentState != DEAD) {
+            currentState = DEAD;
+            anim.play("death");
+        }
     } else {
         currentState = STAGGER; 
         stateTimer = 0.f; 

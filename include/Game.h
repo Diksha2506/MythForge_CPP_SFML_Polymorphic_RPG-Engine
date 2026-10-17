@@ -28,7 +28,7 @@ public:
 
 private:
     sf::RenderWindow window;
-    std::vector<Enemy> enemies;
+    std::vector<std::shared_ptr<Enemy>> enemies;
     std::vector<NPC> npcs;
     Player           player;
     Camera           camera;
@@ -73,6 +73,12 @@ private:
     int   wave             = 1;
     int   score            = 0;
     float enemyDmgTimer    = 0.f;
+    
+    // Wave timing
+    float waveTimer        = 60.f; // 1 min duration
+    bool  isWaveActive     = true; 
+    static constexpr float WAVE_DURATION = 60.f;
+    static constexpr float WAVE_INTERVAL = 60.f;
 
     // Level system
     int   currentLevel       = 1;
@@ -82,6 +88,7 @@ private:
     int   totalEnemiesInWave = 0;
     int   enemiesKilledInWave = 0;
     bool  levelComplete    = false;
+    bool  waveMissionDone  = false; // Moved from static to member for safety
     float levelCompleteTimer = 0.f;
     static constexpr float LEVEL_COMPLETE_DELAY = 3.5f;
     sf::Text levelCompleteText, levelText;

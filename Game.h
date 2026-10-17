@@ -100,6 +100,12 @@ private:
     int   score            = 0;
     float enemyDmgTimer    = 0.f;
 
+    // Wave timing -----------------------------------------
+    float waveTimer        = 60.f; // 1 min duration
+    bool  isWaveActive     = true; 
+    static constexpr float WAVE_DURATION = 60.f;
+    static constexpr float WAVE_INTERVAL = 60.f;
+
     // Level system ----------------------------------------
     int   currentLevel     = 1;   // 1=Village, 2=Forest, 3=Dungeon
     static constexpr int MAX_LEVEL = 3;

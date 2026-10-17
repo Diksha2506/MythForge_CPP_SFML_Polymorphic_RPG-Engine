@@ -15,6 +15,7 @@ private:
     sf::Vector2f patrolPoint;
     float aiTimer;
     float stateTimer;
+    float deathTimer; // Added for post-death delay
 
     sf::Texture tIdle, tRun, tHit, tDeath;
     EState currentState;
